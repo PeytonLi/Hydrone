@@ -18,7 +18,7 @@ import {
 import { generateTurn, memory } from "@hydrone/llm-service";
 import { historicalLedger, worldNodes, actionTemplates } from "@hydrone/core";
 import { randomUUID } from "crypto";
-import { sql, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type {
   WorldNode,
   ActionTemplate,
@@ -160,7 +160,6 @@ export async function executeSamLoop(
         // Wire up edges: create move_to templates and add to edge nodes' allowed_actions
         for (const edgeTargetId of spec.edges) {
           const moveActionId = `action-move-to-${newNode.node_id.replace("node-", "")}`;
-          const reverseActionId = `action-move-to-${edgeTargetId.replace("node-", "")}`;
 
           // Create move_to template from edge target → new node
           await db
@@ -174,13 +173,27 @@ export async function executeSamLoop(
             })
             .onConflictDoNothing();
 
-          // Add move action to edge target node
-          await db
-            .update(worldNodes)
-            .set({
-              allowed_actions: sql`array_append(${worldNodes.allowed_actions}, ${moveActionId})`,
-            })
-            .where(eq(worldNodes.node_id, edgeTargetId));
+          // Read current allowed_actions, append new one, write back as jsonb
+          const [edgeNode] = await db
+            .select({ allowed_actions: worldNodes.allowed_actions })
+            .from(worldNodes)
+            .where(eq(worldNodes.node_id, edgeTargetId))
+            .limit(1);
+
+          if (edgeNode) {
+            const currentActions: string[] = Array.isArray(
+              edgeNode.allowed_actions,
+            )
+              ? edgeNode.allowed_actions
+              : [];
+            if (!currentActions.includes(moveActionId)) {
+              const updatedActions = [...currentActions, moveActionId];
+              await db
+                .update(worldNodes)
+                .set({ allowed_actions: updatedActions })
+                .where(eq(worldNodes.node_id, edgeTargetId));
+            }
+          }
 
           console.log(
             `[WorldGen] Connected "${edgeTargetId}" ↔ "${newNode.node_id}"`,
