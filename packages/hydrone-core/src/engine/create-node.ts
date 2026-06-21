@@ -57,7 +57,7 @@ export function createNode(spec: NodeSpec): WorldNode {
     node_id: nodeId,
     zone: spec.zone,
     name: spec.node_name,
-    description: "",
+    description: spec.node_description || "",
     is_unlocked: true,
     is_corrupted: false,
     allowed_actions: spec.action_template_ids,

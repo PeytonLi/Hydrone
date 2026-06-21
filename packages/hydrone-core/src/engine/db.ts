@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { SubGraph, WorldState, Mutation } from "../schema/zod";
@@ -108,6 +108,29 @@ export async function fetchSubGraph(sessionId: string): Promise<SubGraph> {
     flags[row.key] = row.value;
   }
 
+  // Load stats (default to 100/100/100/100/0 if no row)
+  const [statsRow] = await d
+    .select()
+    .from(schema.playerStats)
+    .where(eq(schema.playerStats.session_id, sessionId))
+    .limit(1);
+
+  const stats = statsRow
+    ? {
+        health: statsRow.health,
+        max_health: statsRow.max_health,
+        energy: statsRow.energy,
+        max_energy: statsRow.max_energy,
+        corruption: statsRow.corruption,
+      }
+    : {
+        health: 100,
+        max_health: 100,
+        energy: 100,
+        max_energy: 100,
+        corruption: 0,
+      };
+
   // Map Drizzle rows to the WorldNode type
   const mapNode = (
     n: typeof currentNode,
@@ -127,6 +150,7 @@ export async function fetchSubGraph(sessionId: string): Promise<SubGraph> {
     neighbors: neighborNodes.map(mapNode),
     inventory,
     flags,
+    stats,
   };
 }
 
@@ -207,6 +231,104 @@ export async function commitMutationBlock(
             .where(eq(schema.sessions.session_id, sessionId));
           break;
         }
+
+        case "add_health": {
+          await tx
+            .insert(schema.playerStats)
+            .values({
+              session_id: sessionId,
+              health: effect.amount,
+              max_health: 100,
+              energy: 100,
+              max_energy: 100,
+              corruption: 0,
+            })
+            .onConflictDoUpdate({
+              target: [schema.playerStats.session_id],
+              set: {
+                health: sql`LEAST(${schema.playerStats.max_health}, ${schema.playerStats.health} + ${effect.amount})`,
+              },
+            });
+          break;
+        }
+
+        case "remove_health": {
+          await tx
+            .insert(schema.playerStats)
+            .values({
+              session_id: sessionId,
+              health: 100,
+              max_health: 100,
+              energy: 100,
+              max_energy: 100,
+              corruption: 0,
+            })
+            .onConflictDoUpdate({
+              target: [schema.playerStats.session_id],
+              set: {
+                health: sql`GREATEST(0, ${schema.playerStats.health} - ${effect.amount})`,
+              },
+            });
+          break;
+        }
+
+        case "add_energy": {
+          await tx
+            .insert(schema.playerStats)
+            .values({
+              session_id: sessionId,
+              health: 100,
+              max_health: 100,
+              energy: effect.amount,
+              max_energy: 100,
+              corruption: 0,
+            })
+            .onConflictDoUpdate({
+              target: [schema.playerStats.session_id],
+              set: {
+                energy: sql`LEAST(${schema.playerStats.max_energy}, ${schema.playerStats.energy} + ${effect.amount})`,
+              },
+            });
+          break;
+        }
+
+        case "remove_energy": {
+          await tx
+            .insert(schema.playerStats)
+            .values({
+              session_id: sessionId,
+              health: 100,
+              max_health: 100,
+              energy: 100,
+              max_energy: 100,
+              corruption: 0,
+            })
+            .onConflictDoUpdate({
+              target: [schema.playerStats.session_id],
+              set: {
+                energy: sql`GREATEST(0, ${schema.playerStats.energy} - ${effect.amount})`,
+              },
+            });
+          break;
+        }
+
+        case "set_corruption": {
+          await tx
+            .insert(schema.playerStats)
+            .values({
+              session_id: sessionId,
+              health: 100,
+              max_health: 100,
+              energy: 100,
+              max_energy: 100,
+              corruption: effect.amount,
+            })
+            .onConflictDoUpdate({
+              target: [schema.playerStats.session_id],
+              set: { corruption: effect.amount },
+            });
+          break;
+        }
       }
     }
   });
@@ -218,6 +340,7 @@ export async function commitMutationBlock(
     current_location_id: subgraph.current_node.node_id,
     inventory: subgraph.inventory,
     flags: subgraph.flags,
+    stats: subgraph.stats,
   };
 }
 

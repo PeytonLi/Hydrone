@@ -1,7 +1,16 @@
 "use client";
 
 import { useGameStore } from "@/store/game-store";
-import { MapPin, Package, Terminal, Play, Loader2 } from "lucide-react";
+import {
+  MapPin,
+  Package,
+  Terminal,
+  Play,
+  Loader2,
+  Heart,
+  Zap,
+  Skull,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const ITEM_LABELS: Record<string, string> = {
@@ -34,6 +43,7 @@ export function PanelB({ onAction }: PanelBProps) {
   const characterMood = useGameStore((s) => s.characterMood);
   const isLoading = useGameStore((s) => s.isLoading);
   const flashedFields = useGameStore((s) => s.flashedFields);
+  const stats = useGameStore((s) => s.stats);
 
   const [displayedText, setDisplayedText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -133,6 +143,69 @@ export function PanelB({ onAction }: PanelBProps) {
         </div>
       )}
 
+      {/* Stats Bar */}
+      {stats && (
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex items-center gap-1.5">
+              <Heart className="w-3 h-3 text-red-400" />
+              <div className="flex-1">
+                <div className="flex justify-between text-[9px] mb-0.5">
+                  <span className="text-red-400">HP</span>
+                  <span className="text-slate-400 font-mono">
+                    {stats.health}/{stats.max_health}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-red-600 to-red-400 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${(stats.health / stats.max_health) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3 h-3 text-yellow-400" />
+              <div className="flex-1">
+                <div className="flex justify-between text-[9px] mb-0.5">
+                  <span className="text-yellow-400">EN</span>
+                  <span className="text-slate-400 font-mono">
+                    {stats.energy}/{stats.max_energy}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-yellow-600 to-yellow-400 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${(stats.energy / stats.max_energy) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Skull className="w-3 h-3 text-purple-400" />
+              <div className="flex-1">
+                <div className="flex justify-between text-[9px] mb-0.5">
+                  <span className="text-purple-400">COR</span>
+                  <span className="text-slate-400 font-mono">
+                    {stats.corruption}%
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-purple-600 to-purple-400 rounded-full transition-all duration-500"
+                    style={{ width: `${stats.corruption}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Inventory */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
         <div className="flex items-center gap-2 mb-2">
@@ -164,7 +237,9 @@ export function PanelB({ onAction }: PanelBProps) {
       <div className="space-y-2">
         <h3 className="text-xs text-slate-500 font-semibold">ACTIONS</h3>
         {allowedActions.length === 0 ? (
-          <p className="text-[10px] text-slate-600 italic">No actions available.</p>
+          <p className="text-[10px] text-slate-600 italic">
+            No actions available.
+          </p>
         ) : (
           <div className="flex flex-col gap-1.5">
             {allowedActions.map((action) => (

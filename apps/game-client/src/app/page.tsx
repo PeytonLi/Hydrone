@@ -5,6 +5,7 @@ import { useGameStore } from "@/store/game-store";
 import { PanelA } from "@/components/PanelA";
 import { PanelB } from "@/components/PanelB";
 import { PanelC } from "@/components/PanelC";
+import { GameMap } from "@/components/GameMap";
 
 const FALLBACK_STATE = {
   sessionId: "demo-1",
@@ -173,6 +174,11 @@ export default function Home() {
           Session: {sessionId.slice(0, 8)}...
         </div>
       </header>
+
+      {/* Map row */}
+      <div className="px-4 pt-4 max-w-[1600px] mx-auto">
+        <GameMap onAction={handleAction} />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 max-w-[1600px] mx-auto">
         <section className="lg:col-span-1">

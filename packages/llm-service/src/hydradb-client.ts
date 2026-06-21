@@ -22,11 +22,31 @@ function ensureClient(): HydraDBClient {
 }
 
 function getTenantId(): string {
-  if (!tenantId) throw new Error("HydraDB not initialized. Call initHydraDB first.");
+  if (!tenantId)
+    throw new Error("HydraDB not initialized. Call initHydraDB first.");
   return tenantId;
 }
 
 export const memory = {
+  async createTenant(name?: string): Promise<void> {
+    const c = ensureClient();
+    const tid = name || getTenantId();
+    try {
+      await c.tenants.create({ tenantId: tid });
+      console.log(`[HydraDB] Tenant "${tid}" created`);
+    } catch (err: any) {
+      // Tenant might already exist — 409 Conflict is OK
+      if (
+        err?.statusCode === 409 ||
+        err?.body?.detail?.error_code === "CONFLICT"
+      ) {
+        console.log(`[HydraDB] Tenant "${tid}" already exists`);
+        return;
+      }
+      throw err;
+    }
+  },
+
   async seedLore(lore: LoreDoc[]): Promise<void> {
     const c = ensureClient();
     const tid = getTenantId();
@@ -41,12 +61,14 @@ export const memory = {
           title: doc.title,
           type: "text",
           content: { text: doc.content },
-        }))
+        })),
       ),
     });
 
     const results = result.data?.results ?? [];
-    const ids: string[] = results.map((r) => r.id!).filter((id): id is string => !!id);
+    const ids: string[] = results
+      .map((r) => r.id!)
+      .filter((id): id is string => !!id);
     if (ids.length === 0) return;
 
     while (true) {
@@ -54,14 +76,15 @@ export const memory = {
       const statuses = status.data?.statuses ?? [];
       const allDone = statuses.every(
         (s) =>
-          s.indexingStatus === "completed" || s.indexingStatus === "graph_creation"
+          s.indexingStatus === "completed" ||
+          s.indexingStatus === "graph_creation",
       );
-      const anyErrored = statuses.find(
-        (s) => s.indexingStatus === "errored"
-      );
+      const anyErrored = statuses.find((s) => s.indexingStatus === "errored");
       if (anyErrored) {
         throw new Error(
-          "Lore indexing failed: " + ((anyErrored as { errorMessage?: string }).errorMessage || "unknown error")
+          "Lore indexing failed: " +
+            ((anyErrored as { errorMessage?: string }).errorMessage ||
+              "unknown error"),
         );
       }
       if (allDone) break;
@@ -108,13 +131,11 @@ export const memory = {
       graphContext: false,
     });
 
-    const chunks = (result.data?.chunks || []) as Array<{
-      chunk_content: string;
-      relevancy_score: number;
-    }>;
-    return chunks.map((raw) => ({
-      content: raw.chunk_content,
-      relevance_score: raw.relevancy_score,
+    const rawChunks = (result.data?.chunks || []) as Array<Record<string, any>>;
+    return rawChunks.map((raw) => ({
+      content: raw.chunk_content || raw.chunkContent || raw.content || "",
+      relevance_score:
+        raw.relevancy_score ?? raw.relevancyScore ?? raw.score ?? 0,
     }));
   },
 };

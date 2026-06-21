@@ -1,12 +1,21 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export const MutationSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('add_item'), item_id: z.string() }),
-  z.object({ type: z.literal('remove_item'), item_id: z.string() }),
-  z.object({ type: z.literal('set_flag'), key: z.string(), value: z.boolean() }),
-  z.object({ type: z.literal('unlock_node'), node_id: z.string() }),
-  z.object({ type: z.literal('corrupt_node'), node_id: z.string() }),
-  z.object({ type: z.literal('move_to'), node_id: z.string() }),
+export const MutationSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("add_item"), item_id: z.string() }),
+  z.object({ type: z.literal("remove_item"), item_id: z.string() }),
+  z.object({
+    type: z.literal("set_flag"),
+    key: z.string(),
+    value: z.boolean(),
+  }),
+  z.object({ type: z.literal("unlock_node"), node_id: z.string() }),
+  z.object({ type: z.literal("corrupt_node"), node_id: z.string() }),
+  z.object({ type: z.literal("move_to"), node_id: z.string() }),
+  z.object({ type: z.literal("add_health"), amount: z.number() }),
+  z.object({ type: z.literal("remove_health"), amount: z.number() }),
+  z.object({ type: z.literal("add_energy"), amount: z.number() }),
+  z.object({ type: z.literal("remove_energy"), amount: z.number() }),
+  z.object({ type: z.literal("set_corruption"), amount: z.number() }),
 ]);
 export type Mutation = z.infer<typeof MutationSchema>;
 
@@ -43,6 +52,7 @@ export type ActionTemplate = z.infer<typeof ActionTemplateSchema>;
 export const NodeSpecSchema = z.object({
   node_name: z.string(),
   zone: z.string(),
+  node_description: z.string().optional(),
   edges: z.array(z.string()),
   action_template_ids: z.array(z.string()),
   item_ids: z.array(z.string()),
@@ -52,18 +62,20 @@ export type NodeSpec = z.infer<typeof NodeSpecSchema>;
 export const LLMGameResponseSchema = z.object({
   narrative_text: z.string(),
   character_portrait_mood: z.enum([
-    'neutral',
-    'excited',
-    'worried',
-    'triumphant',
-    'defeated',
+    "neutral",
+    "excited",
+    "worried",
+    "triumphant",
+    "defeated",
   ]),
   system_log_message: z.string(),
   chosen_action_id: z.string(),
   new_node_spec: NodeSpecSchema.optional(),
   suggested_action_buttons: z.array(
-    z.object({ button_label: z.string(), action_id: z.string() })
+    z.object({ button_label: z.string(), action_id: z.string() }),
   ),
+  promptTokens: z.number().optional(),
+  completionTokens: z.number().optional(),
 });
 export type LLMGameResponse = z.infer<typeof LLMGameResponseSchema>;
 
@@ -73,6 +85,13 @@ export const SubGraphSchema = z.object({
   neighbors: z.array(WorldNodeSchema),
   inventory: z.array(z.string()),
   flags: z.record(z.string(), z.boolean()),
+  stats: z.object({
+    health: z.number(),
+    max_health: z.number(),
+    energy: z.number(),
+    max_energy: z.number(),
+    corruption: z.number(),
+  }),
 });
 export type SubGraph = z.infer<typeof SubGraphSchema>;
 
@@ -81,11 +100,18 @@ export const WorldStateSchema = z.object({
   current_location_id: z.string(),
   inventory: z.array(z.string()),
   flags: z.record(z.string(), z.boolean()),
+  stats: z.object({
+    health: z.number(),
+    max_health: z.number(),
+    energy: z.number(),
+    max_energy: z.number(),
+    corruption: z.number(),
+  }),
 });
 export type WorldState = z.infer<typeof WorldStateSchema>;
 
 export const LoreDocSchema = z.object({
-  type: z.literal('knowledge'),
+  type: z.literal("knowledge"),
   title: z.string(),
   content: z.string(),
 });

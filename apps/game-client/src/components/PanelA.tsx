@@ -4,19 +4,45 @@ import { useGameStore } from "@/store/game-store";
 import { BarChart3, Zap, TrendingUp, History } from "lucide-react";
 
 const DRIFT_TRANSCRIPT = [
-  { speaker: "SYSTEM", text: "RESTORE: session-7b3f, last location: Security Checkpoint." },
-  { speaker: "NARRATOR", text: "You stand in the Vault Chamber. Wait — weren't you just in the entrance?" },
-  { speaker: "SYSTEM", text: "WARNING: Inconsistency detected. Node mismatch: expected 'node-security', got 'node-vault'." },
-  { speaker: "NARRATOR", text: "You notice the keycard is still in your inventory, but the door is already open behind you." },
-  { speaker: "SYSTEM", text: "Item duplication detected: 'item-medkit' appears twice in inventory. Rolling back." },
-  { speaker: "NARRATOR", text: "The medkit flickers out of existence. The blown-open door flickers too — then it's intact again." },
-  { speaker: "SYSTEM", text: "State diverged. Context window overflow. Narrative coherence: 43%. Drift severity: HIGH." },
-  { speaker: "NARRATOR", text: "Where... where am I? This doesn't make sense anymore. The walls keep changing." },
+  {
+    speaker: "SYSTEM",
+    text: "RESTORE: session-7b3f, last location: Security Checkpoint.",
+  },
+  {
+    speaker: "NARRATOR",
+    text: "You stand in the Vault Chamber. Wait — weren't you just in the entrance?",
+  },
+  {
+    speaker: "SYSTEM",
+    text: "WARNING: Inconsistency detected. Node mismatch: expected 'node-security', got 'node-vault'.",
+  },
+  {
+    speaker: "NARRATOR",
+    text: "You notice the keycard is still in your inventory, but the door is already open behind you.",
+  },
+  {
+    speaker: "SYSTEM",
+    text: "Item duplication detected: 'item-medkit' appears twice in inventory. Rolling back.",
+  },
+  {
+    speaker: "NARRATOR",
+    text: "The medkit flickers out of existence. The blown-open door flickers too — then it's intact again.",
+  },
+  {
+    speaker: "SYSTEM",
+    text: "State diverged. Context window overflow. Narrative coherence: 43%. Drift severity: HIGH.",
+  },
+  {
+    speaker: "NARRATOR",
+    text: "Where... where am I? This doesn't make sense anymore. The walls keep changing.",
+  },
 ];
 
 export function PanelA() {
   const boundedCost = useGameStore((s) => s.boundedCost);
   const linearCost = useGameStore((s) => s.linearCost);
+  const promptTokens = useGameStore((s) => s.promptTokens);
+  const completionTokens = useGameStore((s) => s.completionTokens);
   const showDrift = useGameStore((s) => s.showDriftTranscript);
   const toggleDrift = useGameStore((s) => s.toggleDriftTranscript);
 
@@ -67,7 +93,7 @@ export function PanelA() {
             <div className="flex justify-between text-xs mb-1">
               <span className="text-cyan-400">Bounded (structured output)</span>
               <span className="text-cyan-400 font-mono">
-                ~{boundedCost.toLocaleString()} tokens
+                ~{(boundedCost || 1200).toLocaleString()} tokens
               </span>
             </div>
             <div className="h-3 bg-slate-800 rounded-full overflow-hidden">
@@ -81,11 +107,9 @@ export function PanelA() {
           {/* Linear bar */}
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-red-400">
-                Linear (growing chat log)
-              </span>
+              <span className="text-red-400">Linear (growing chat log)</span>
               <span className="text-red-400 font-mono">
-                ~{linearCost.toLocaleString()} tokens
+                ~{(linearCost || 4500).toLocaleString()} tokens
               </span>
             </div>
             <div className="h-3 bg-slate-800 rounded-full overflow-hidden">
@@ -98,6 +122,11 @@ export function PanelA() {
 
           <p className="text-[10px] text-slate-500 mt-2">
             Constant per-turn cost vs. linearly growing chat history.
+            {promptTokens > 0 && (
+              <span className="text-cyan-400 ml-1">
+                (Last turn: {promptTokens} in / {completionTokens} out)
+              </span>
+            )}
           </p>
         </div>
       </div>
@@ -144,7 +173,9 @@ export function PanelA() {
       <div className="bg-slate-900/50 border border-slate-800/50 rounded-lg p-3">
         <div className="flex items-center gap-2 mb-2">
           <TrendingUp className="w-3 h-3 text-green-400" />
-          <span className="text-green-400 text-[10px] font-semibold">HYDRONE ADVANTAGE</span>
+          <span className="text-green-400 text-[10px] font-semibold">
+            HYDRONE ADVANTAGE
+          </span>
         </div>
         <p className="text-[10px] text-slate-500 leading-relaxed">
           Bounded architecture keeps per-turn token cost constant. A linear chat

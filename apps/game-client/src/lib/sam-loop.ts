@@ -13,8 +13,12 @@ import {
   validateAction,
   commitMutationBlock,
   createNode,
+  getDb,
 } from "@hydrone/core";
 import { generateTurn, memory } from "@hydrone/llm-service";
+import { historicalLedger, worldNodes, actionTemplates } from "@hydrone/core";
+import { randomUUID } from "crypto";
+import { sql, eq } from "drizzle-orm";
 import type {
   WorldNode,
   ActionTemplate,
@@ -44,7 +48,15 @@ export interface SamLoopOutput {
   memoryChunks: Chunk[];
   boundedCost: number;
   linearCost: number;
-  /** Whether the action was rejected (tactical setback applied). */
+  promptTokens: number;
+  completionTokens: number;
+  stats?: {
+    health: number;
+    max_health: number;
+    energy: number;
+    max_energy: number;
+    corruption: number;
+  };
   wasSetback: boolean;
 }
 
@@ -72,12 +84,17 @@ export async function executeSamLoop(
       sessionId,
       `${actionId} ${subgraph.current_node.name}`,
     );
-  } catch {
-    // Memory query failure is non-blocking — continue without context
+    if (memoryChunks.length > 0) {
+      console.log(
+        `[HydraDB] Found ${memoryChunks.length} memory chunks for query`,
+      );
+    }
+  } catch (err) {
+    console.warn("[HydraDB] Query failed (non-blocking):", err);
     memoryChunks = [];
   }
 
-  // 4. Generate turn via LLM (AI SDK + Claude, Zod-validated)
+  // 4. Generate turn via LLM (AI SDK + DeepSeek/Claude, Zod-validated)
   const turnCtx: TurnContext = {
     session_id: sessionId,
     subgraph,
@@ -87,12 +104,27 @@ export async function executeSamLoop(
   };
   const llmResponse = await generateTurn(turnCtx);
 
+  // Log whether the LLM proposed a new node
+  if (llmResponse.new_node_spec) {
+    console.log(
+      `[WorldGen] LLM proposed new node: "${llmResponse.new_node_spec.node_name}" in zone ${llmResponse.new_node_spec.zone}`,
+    );
+  } else {
+    console.log(`[WorldGen] LLM did NOT propose a new node this turn`);
+  }
+
   // 5. Validate the action against authored gates (pure)
   const validation = validateAction(
     subgraph,
     actionId,
     llmResponse.new_node_spec,
   );
+
+  if (!validation.ok && llmResponse.new_node_spec) {
+    console.log(
+      `[WorldGen] Node validation FAILED for "${llmResponse.new_node_spec.node_name}" — rejected`,
+    );
+  }
 
   // 6. Resolve effects: either the authored effects, or a tactical setback
   let effects: Mutation[];
@@ -101,13 +133,65 @@ export async function executeSamLoop(
   if (validation.ok) {
     effects = [...validation.effects];
 
-    // 6b. If LLM proposed a valid new node, create it and add to effects
+    // 6b. If LLM proposed a valid new node, create it and wire up edges
     if (llmResponse.new_node_spec) {
       try {
-        createNode(llmResponse.new_node_spec);
-        // TODO: persist newNode to Postgres in the transaction block
-      } catch {
-        // Node creation failure is non-blocking
+        const spec = llmResponse.new_node_spec;
+        const newNode = createNode(spec);
+        console.log(
+          `[WorldGen] Created node "${newNode.name}" (${newNode.node_id})`,
+        );
+        const db = getDb();
+
+        // Persist new node
+        await db
+          .insert(worldNodes)
+          .values({
+            node_id: newNode.node_id,
+            zone: newNode.zone,
+            name: newNode.name,
+            description: newNode.description,
+            is_unlocked: newNode.is_unlocked,
+            is_corrupted: newNode.is_corrupted,
+            allowed_actions: newNode.allowed_actions,
+          })
+          .onConflictDoNothing();
+
+        // Wire up edges: create move_to templates and add to edge nodes' allowed_actions
+        for (const edgeTargetId of spec.edges) {
+          const moveActionId = `action-move-to-${newNode.node_id.replace("node-", "")}`;
+          const reverseActionId = `action-move-to-${edgeTargetId.replace("node-", "")}`;
+
+          // Create move_to template from edge target → new node
+          await db
+            .insert(actionTemplates)
+            .values({
+              template_id: moveActionId,
+              label: `Go to ${newNode.name}`,
+              narrative_hint: `Travel to the newly discovered ${newNode.name}.`,
+              requires: { items: [], flags: {} },
+              effects: [{ type: "move_to", node_id: newNode.node_id }],
+            })
+            .onConflictDoNothing();
+
+          // Add move action to edge target node
+          await db
+            .update(worldNodes)
+            .set({
+              allowed_actions: sql`array_append(${worldNodes.allowed_actions}, ${moveActionId})`,
+            })
+            .where(eq(worldNodes.node_id, edgeTargetId));
+
+          console.log(
+            `[WorldGen] Connected "${edgeTargetId}" ↔ "${newNode.node_id}"`,
+          );
+        }
+
+        console.log(
+          `[WorldGen] Persisted "${newNode.name}" with ${spec.edges.length} edges`,
+        );
+      } catch (err) {
+        console.error(`[WorldGen] Failed to persist node:`, err);
       }
     }
   } else {
@@ -117,8 +201,21 @@ export async function executeSamLoop(
   }
 
   // 7. Commit effects as a single Postgres transaction
-  //    (setback effects are empty — zero writes occur)
   await commitMutationBlock(sessionId, effects);
+
+  // 7b. Write to historical ledger (Postgres)
+  try {
+    const db = getDb();
+    await db.insert(historicalLedger).values({
+      id: randomUUID(),
+      session_id: sessionId,
+      ts: new Date(),
+      action: actionId,
+      narrative_summary: llmResponse.narrative_text.slice(0, 500),
+    });
+  } catch {
+    // Ledger write is non-blocking
+  }
 
   // 8. Fire-and-forget episodic ingest into HydraDB
   const ledgerEntry: LedgerEntry = {
@@ -128,6 +225,7 @@ export async function executeSamLoop(
     narrative_summary: llmResponse.narrative_text.slice(0, 200),
   };
   memory.ingestEpisode(sessionId, ledgerEntry);
+  console.log(`[HydraDB] Episodic memory ingested for action: ${actionId}`);
 
   // 9. Re-fetch state to get the authoritative post-commit view
   const updatedSubgraph = await fetchSubGraph(sessionId);
@@ -150,8 +248,11 @@ export async function executeSamLoop(
       : llmResponse.system_log_message,
     characterMood: wasSetback ? "worried" : llmResponse.character_portrait_mood,
     memoryChunks,
-    boundedCost: 1200,
+    boundedCost: llmResponse.promptTokens ?? 1200,
     linearCost: 4500 + turnCount * 800,
+    promptTokens: llmResponse.promptTokens ?? 0,
+    completionTokens: llmResponse.completionTokens ?? 0,
+    stats: updatedSubgraph.stats,
     wasSetback,
   };
 }

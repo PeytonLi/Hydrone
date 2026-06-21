@@ -11,7 +11,7 @@ export function PanelC() {
   const sessionId = useGameStore((s) => s.sessionId);
   const flashedFields = useGameStore((s) => s.flashedFields);
   const simulateDeviceDestruction = useGameStore(
-    (s) => s.simulateDeviceDestruction
+    (s) => s.simulateDeviceDestruction,
   );
 
   const pgState = {
@@ -74,7 +74,14 @@ export function PanelC() {
         <div className="space-y-1.5 max-h-36 overflow-y-auto">
           {memoryChunks.length === 0 ? (
             <p className="text-[10px] text-slate-600 italic">
-              No memory indexed yet.
+              No memory indexed yet. Memories are stored each turn and queried
+              for narrative context.
+              <br />
+              <span className="text-[8px]">
+                (Lore seeds on first load. Episodic memory is fire-and-forget —
+                newly ingested memories appear on subsequent turns due to async
+                indexing.)
+              </span>
             </p>
           ) : (
             memoryChunks.map((chunk, i) => (
@@ -91,7 +98,8 @@ export function PanelC() {
           )}
         </div>
         <p className="text-[9px] text-slate-600 mt-2">
-          Episodic count: {memoryChunks.length}. Async-indexed. Never gates state.
+          Episodic count: {memoryChunks.length}. Async-indexed. Never gates
+          state.
         </p>
       </div>
 

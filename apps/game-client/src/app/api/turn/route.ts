@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initEngine, loadSeed, getDb, sessions } from "@hydrone/core";
+import {
+  initEngine,
+  loadSeed,
+  getDb,
+  sessions,
+  playerStats,
+} from "@hydrone/core";
 import { initHydraDB, memory } from "@hydrone/llm-service";
 import {
   executeSamLoop,
@@ -10,6 +16,7 @@ import { randomUUID } from "crypto";
 
 let engineInitialized = false;
 let hydradbInitialized = false;
+let llmAvailable = false;
 
 async function ensureEngine() {
   if (!engineInitialized && process.env.DATABASE_URL) {
@@ -22,8 +29,60 @@ async function ensureEngine() {
 async function ensureHydraDB() {
   if (!hydradbInitialized && process.env.HYDRA_DB_API_KEY) {
     initHydraDB(process.env.HYDRA_DB_API_KEY, "hydrone-demo");
+    console.log("[HydraDB] Initialized, creating tenant...");
+    try {
+      await memory.createTenant();
+      console.log("[HydraDB] Seeding lore...");
+      await memory.seedLore([
+        {
+          type: "knowledge",
+          title: "The Hydrone Incident",
+          content:
+            "Hydrone Systems was a classified research facility developing advanced AI before a containment breach forced evacuation. The facility spans four sectors: the derelict Sector-7, the Neon Alleyways black market, the Corporate Tower, and the sealed Server Vault. Rumors persist that the Hydrone Core achieved sentience before going dark.",
+        },
+        {
+          type: "knowledge",
+          title: "The Data Chip",
+          content:
+            "The data chip contains critical encrypted research data from the Hydrone project. It is stored in the Vault Chamber of Sector-7, protected by a biometric lock requiring a security keycard. Multiple parties — corporate agents, black market dealers, and rogue AIs — are searching for it.",
+        },
+        {
+          type: "knowledge",
+          title: "Sector-7 Layout",
+          content:
+            "Sector-7 consists of an Entrance Hall with a flickering terminal, Corridor Alpha leading to Security and Storage, a Maintenance Shaft with salvaged equipment, Corridor Beta ending at the sealed Vault Chamber. Emergency power is failing and areas may be corrupted.",
+        },
+        {
+          type: "knowledge",
+          title: "The Neon Alleyways",
+          content:
+            "Beneath the facility lies the Neon Alleyways — a black market hub where information and illegal tech are traded. A hooded vendor sells rare items including virus payloads and decryption tools. An underground server room contains network keys that could unlock the Core Gateway.",
+        },
+        {
+          type: "knowledge",
+          title: "The Corporate Tower",
+          content:
+            "The Corporate Tower houses executive offices and R&D laboratories. Executive badges grant elevator access to restricted floors. The R&D lab contains prototype devices and a sealed containment unit. The CEO's safe may hold secrets about the Core project.",
+        },
+      ]);
+      console.log("[HydraDB] Lore seeded successfully");
+    } catch (err) {
+      console.error("[HydraDB] Lore seeding failed:", err);
+    }
     hydradbInitialized = true;
   }
+}
+
+function checkLLM(): boolean {
+  if (llmAvailable) return true;
+  if (process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY) {
+    llmAvailable = true;
+    return true;
+  }
+  console.warn(
+    "No LLM API key set (DEEPSEEK_API_KEY or ANTHROPIC_API_KEY) — using fallback narration",
+  );
+  return false;
 }
 
 export async function GET(req: NextRequest) {
@@ -101,6 +160,18 @@ export async function POST(req: NextRequest) {
             last_updated: new Date(),
           })
           .onConflictDoNothing();
+        // Initialize player stats
+        await db
+          .insert(playerStats)
+          .values({
+            session_id: sessionId,
+            health: 100,
+            max_health: 100,
+            energy: 100,
+            max_energy: 100,
+            corruption: 0,
+          })
+          .onConflictDoNothing();
       }
       return NextResponse.json({ sessionId });
     }
@@ -113,6 +184,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (process.env.DATABASE_URL) {
+      const liveLLM = checkLLM();
+      console.log(
+        `Turn: session=${sessionId} action=${actionId} liveLLM=${liveLLM}`,
+      );
       const result: SamLoopOutput = await executeSamLoop({
         sessionId,
         actionId,
@@ -120,6 +195,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result);
     }
 
+    // No DATABASE_URL — pure demo fallback
+    console.log(`Turn (demo mock): session=${sessionId} action=${actionId}`);
     return NextResponse.json(runMockTurn(sessionId, actionId));
   } catch (err) {
     console.error("POST /api/turn failed:", err);
