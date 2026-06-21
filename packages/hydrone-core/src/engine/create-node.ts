@@ -4,6 +4,15 @@ import { templateRegistry } from "./template-registry";
 
 let nodeCounter = NODES.length;
 
+// Module-level set of known node IDs — starts with seed nodes and grows as
+// dynamic nodes are created or reloaded from Postgres on cold start.
+const knownNodeIds = new Set(NODES.map((n) => n.node_id));
+
+/** Register node IDs from Postgres on cold start so edge validation works. */
+export function registerNodeIds(ids: string[]): void {
+  for (const id of ids) knownNodeIds.add(id);
+}
+
 /** Generate a unique node_id for a dynamically created node. */
 function generateNodeId(): string {
   nodeCounter++;
@@ -22,7 +31,6 @@ export function createNode(spec: NodeSpec): WorldNode {
     templateRegistry.getAll().map((t) => t.template_id),
   );
   const itemIds = new Set(ITEM_CATALOG.map((i) => i.item_id));
-  const nodeIds = new Set(NODES.map((n) => n.node_id));
 
   // Validate every action_template_id references a real template
   for (const tid of spec.action_template_ids) {
@@ -42,9 +50,9 @@ export function createNode(spec: NodeSpec): WorldNode {
     }
   }
 
-  // Validate edges reference known nodes (seed + any previously created)
+  // Validate edges reference known nodes (seed + dynamic from this session or prior)
   for (const edge of spec.edges) {
-    if (!nodeIds.has(edge)) {
+    if (!knownNodeIds.has(edge)) {
       throw new Error(
         `createNode: unknown edge target "${edge}" in node "${spec.node_name}"`,
       );
@@ -52,9 +60,7 @@ export function createNode(spec: NodeSpec): WorldNode {
   }
 
   const nodeId = generateNodeId();
-
-  // Track this node so future createNode calls can reference it via edges
-  nodeIds.add(nodeId);
+  knownNodeIds.add(nodeId);
 
   return {
     node_id: nodeId,

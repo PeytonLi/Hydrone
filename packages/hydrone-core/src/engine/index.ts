@@ -2,7 +2,7 @@
 
 export { computeAllowedActions } from "./compute-allowed-actions";
 export { validateAction, resolveActionTemplates } from "./validate-action";
-export { createNode } from "./create-node";
+export { createNode, registerNodeIds } from "./create-node";
 export { templateRegistry } from "./template-registry";
 export {
   initEngine,

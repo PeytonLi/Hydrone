@@ -8,6 +8,7 @@ import { NODES, ITEM_CATALOG, ACTION_TEMPLATES } from "../content/seed";
 import * as schema from "../schema/postgres";
 import { resolveActionTemplates } from "./validate-action";
 import { templateRegistry } from "./template-registry";
+import { registerNodeIds } from "./create-node";
 
 let db: NodePgDatabase<typeof schema> | null = null;
 
@@ -413,4 +414,11 @@ export async function loadSeed(): Promise<void> {
     effects: row.effects as ActionTemplate["effects"],
   }));
   templateRegistry.registerMany(hydratedTemplates);
+
+  // Reload all node IDs from Postgres so createNode can validate edges against
+  // dynamic nodes created in previous server instances.
+  const allNodeRows = await d
+    .select({ node_id: schema.worldNodes.node_id })
+    .from(schema.worldNodes);
+  registerNodeIds(allNodeRows.map((r) => r.node_id));
 }
