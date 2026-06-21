@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@hydrone/core", "@hydrone/llm-service"],
-  serverExternalPackages: ["@hydradb/sdk"],
+  serverExternalPackages: ["@hydradb/sdk", "@ai-sdk/anthropic", "ai"],
 };
 
 export default nextConfig;

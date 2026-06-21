@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useGameStore } from "@/store/game-store";
 import { PanelA } from "@/components/PanelA";
 import { PanelB } from "@/components/PanelB";
 import { PanelC } from "@/components/PanelC";
 
-const INITIAL_STATE = {
+const FALLBACK_STATE = {
   sessionId: "demo-1",
   currentNode: {
     node_id: "node-entrance",
@@ -68,15 +68,60 @@ const INITIAL_STATE = {
   linearCost: 4500,
 };
 
+/** Try to fetch initial state from the server. Falls back to hardcoded demo state. */
+async function fetchInitialState(): Promise<typeof FALLBACK_STATE> {
+  let sessionId = "";
+  try {
+    const createRes = await fetch("/api/turn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actionId: "__create__" }),
+    });
+    const createData = await createRes.json();
+    if (createData.sessionId) {
+      sessionId = createData.sessionId;
+    }
+  } catch {
+    // Server not ready - use fallback
+  }
+
+  if (sessionId) {
+    try {
+      const stateRes = await fetch(
+        `/api/turn?sessionId=${encodeURIComponent(sessionId)}`,
+      );
+      const stateData = await stateRes.json();
+      if (!stateData.error && stateData.currentNode) {
+        localStorage.setItem("hydrone-session-id", sessionId);
+        return stateData;
+      }
+    } catch {
+      // Server state fetch failed - use fallback
+    }
+  }
+
+  localStorage.setItem("hydrone-session-id", FALLBACK_STATE.sessionId);
+  return FALLBACK_STATE;
+}
+
 export default function Home() {
   const hydrate = useGameStore((s) => s.hydrateFromServer);
   const sessionId = useGameStore((s) => s.sessionId);
   const startTurn = useGameStore((s) => s.startTurn);
+  const [initialized, setInitialized] = useState(false);
 
-  // Hydrate on mount
+  // Hydrate from server on mount, falling back to hardcoded state
   useEffect(() => {
-    hydrate(INITIAL_STATE as any);
-    localStorage.setItem("hydrone-session-id", INITIAL_STATE.sessionId);
+    let cancelled = false;
+    fetchInitialState().then((state) => {
+      if (!cancelled) {
+        hydrate(state as any);
+        setInitialized(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [hydrate]);
 
   const handleAction = useCallback(
@@ -98,10 +143,10 @@ export default function Home() {
         console.error("Turn failed:", err);
       }
     },
-    [sessionId, hydrate, startTurn]
+    [sessionId, hydrate, startTurn],
   );
 
-  if (!sessionId) {
+  if (!initialized || !sessionId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-cyan-400 font-mono">
         <div className="text-center">
@@ -114,7 +159,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-200 font-mono">
-      {/* Header */}
       <header className="border-b border-slate-800 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse" />
@@ -130,7 +174,6 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Three-panel layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 max-w-[1600px] mx-auto">
         <section className="lg:col-span-1">
           <PanelA />
