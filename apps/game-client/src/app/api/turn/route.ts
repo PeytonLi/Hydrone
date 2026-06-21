@@ -1,25 +1,285 @@
 import { NextRequest, NextResponse } from "next/server";
+import { initEngine, loadSeed, getDb, sessions } from "@hydrone/core";
+import { initHydraDB, memory } from "@hydrone/llm-service";
+import {
+  executeSamLoop,
+  resetTurnCounter,
+  type SamLoopOutput,
+} from "@/lib/sam-loop";
+import { randomUUID } from "crypto";
 
-// Agent D: Mock SAM API route wired against A-defined interfaces.
-// Replace with real engine+llm calls when Agent E integrates.
+let engineInitialized = false;
+let hydradbInitialized = false;
 
-const MOCK_INIT: any = {
-  sessionId: "demo-1",
-  currentNode: {
-    node_id: "node-entrance",
-    zone: "sector-7",
-    name: "Entrance Hall",
-    description: "A dusty anteroom.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: ["action-examine", "action-move-to-corridor-a"],
-  },
-  neighbors: [
-    {
+async function ensureEngine() {
+  if (!engineInitialized && process.env.DATABASE_URL) {
+    initEngine(process.env.DATABASE_URL);
+    await loadSeed();
+    engineInitialized = true;
+  }
+}
+
+async function ensureHydraDB() {
+  if (!hydradbInitialized && process.env.HYDRA_DB_API_KEY) {
+    initHydraDB(process.env.HYDRA_DB_API_KEY, "hydrone-demo");
+    hydradbInitialized = true;
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    await ensureEngine();
+    await ensureHydraDB();
+    const url = new URL(req.url);
+    const sessionId = url.searchParams.get("sessionId");
+    if (!sessionId)
+      return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
+
+    if (process.env.DATABASE_URL) {
+      const { fetchSubGraph, computeAllowedActions } =
+        await import("@hydrone/core");
+      const subgraph = await fetchSubGraph(sessionId);
+      const allowedActions = computeAllowedActions(subgraph);
+
+      let memoryChunks: any[] = [];
+      try {
+        memoryChunks = await memory.query(sessionId, "initial exploration");
+      } catch {
+        /* ok */
+      }
+
+      return NextResponse.json({
+        sessionId,
+        currentNode: subgraph.current_node,
+        neighbors: subgraph.neighbors,
+        inventory: subgraph.inventory,
+        flags: subgraph.flags,
+        allowedActions,
+        narrativeText: "",
+        systemLogMessage: "Session restored from Postgres.",
+        characterMood: "neutral" as const,
+        memoryChunks,
+        boundedCost: 1200,
+        linearCost: 4500,
+      });
+    }
+
+    return NextResponse.json(getDemoInitState(sessionId));
+  } catch (err) {
+    console.error("GET /api/turn failed:", err);
+    return NextResponse.json(
+      { error: "Failed to load state" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await ensureEngine();
+    await ensureHydraDB();
+
+    const body = await req.json();
+    const actionId: string = body.actionId;
+    let sessionId: string = body.sessionId;
+
+    if (actionId === "__reset__") {
+      resetTurnCounter();
+      return NextResponse.json({ reset: true });
+    }
+
+    if (actionId === "__create__") {
+      sessionId = "demo-" + randomUUID().slice(0, 8);
+      if (process.env.DATABASE_URL) {
+        const db = getDb();
+        await db
+          .insert(sessions)
+          .values({
+            session_id: sessionId,
+            user_id: body.userId || "anon",
+            current_location_id: "node-entrance",
+            last_updated: new Date(),
+          })
+          .onConflictDoNothing();
+      }
+      return NextResponse.json({ sessionId });
+    }
+
+    if (!sessionId || !actionId) {
+      return NextResponse.json(
+        { error: "Missing sessionId or actionId" },
+        { status: 400 },
+      );
+    }
+
+    if (process.env.DATABASE_URL) {
+      const result: SamLoopOutput = await executeSamLoop({
+        sessionId,
+        actionId,
+      });
+      return NextResponse.json(result);
+    }
+
+    return NextResponse.json(runMockTurn(sessionId, actionId));
+  } catch (err) {
+    console.error("POST /api/turn failed:", err);
+    return NextResponse.json(
+      {
+        error: "Turn execution failed",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      { status: 500 },
+    );
+  }
+}
+
+function getDemoInitState(sessionId: string) {
+  return {
+    sessionId,
+    currentNode: {
+      node_id: "node-entrance",
+      zone: "sector-7",
+      name: "Entrance Hall",
+      description: "A dusty anteroom.",
+      is_unlocked: true,
+      is_corrupted: false,
+      allowed_actions: ["action-examine", "action-move-to-corridor-a"],
+    },
+    neighbors: [
+      {
+        node_id: "node-corridor-a",
+        zone: "sector-7",
+        name: "Corridor Alpha",
+        description: "A long hallway.",
+        is_unlocked: true,
+        is_corrupted: false,
+        allowed_actions: [
+          "action-examine",
+          "action-move-to-entrance",
+          "action-move-to-security",
+          "action-move-to-storage",
+        ],
+      },
+    ],
+    inventory: [],
+    flags: {},
+    allowedActions: [
+      {
+        template_id: "action-examine",
+        label: "Examine Surroundings",
+        narrative_hint: "Survey for clues.",
+        requires: { items: [], flags: {} },
+        effects: [],
+      },
+      {
+        template_id: "action-move-to-corridor-a",
+        label: "Go to Corridor Alpha",
+        narrative_hint: "Move forward.",
+        requires: { items: [], flags: {} },
+        effects: [{ type: "move_to", node_id: "node-corridor-a" }],
+      },
+    ],
+    narrativeText: "",
+    systemLogMessage: "Session restored (demo).",
+    characterMood: "neutral" as const,
+    memoryChunks: [],
+    boundedCost: 1200,
+    linearCost: 4500,
+  };
+}
+
+let mockState: Record<string, any> = {};
+
+function runMockTurn(sessionId: string, actionId: string) {
+  const RESP: Record<string, any> = {
+    "action-examine": {
+      nt: "You scan the area carefully.",
+      mood: "neutral",
+      log: "Turn T - Examine",
+    },
+    "action-move-to-corridor-a": {
+      nt: "Corridor Alpha stretches ahead.",
+      mood: "excited",
+      log: "Turn T - Corridor Alpha",
+    },
+    "action-move-to-security": {
+      nt: "Security Checkpoint. A keycard lies on the floor.",
+      mood: "excited",
+      log: "Turn T - Security",
+    },
+    "action-move-to-storage": {
+      nt: "Storage Room. A medkit sits on the floor.",
+      mood: "neutral",
+      log: "Turn T - Storage",
+    },
+    "action-move-to-entrance": {
+      nt: "You backtrack to the entrance.",
+      mood: "neutral",
+      log: "Turn T - Entrance",
+    },
+    "action-move-to-corridor-b": {
+      nt: "The corridor narrows. Vault door ahead.",
+      mood: "worried",
+      log: "Turn T - Corridor Beta",
+    },
+    "action-pick-up-keycard": {
+      nt: "You pick up the security badge.",
+      mood: "triumphant",
+      log: "Turn T - Keycard acquired",
+    },
+    "action-pick-up-medkit": {
+      nt: "You retrieve the medkit.",
+      mood: "neutral",
+      log: "Turn T - Medkit acquired",
+    },
+    "action-access-vault": {
+      nt: "GREEN light. The vault door hisses open.",
+      mood: "triumphant",
+      log: "Turn T - VAULT ACCESSED",
+    },
+    "action-retrieve-data-chip": {
+      nt: "You extract the data chip.",
+      mood: "triumphant",
+      log: "Turn T - Data Chip acquired",
+    },
+  };
+
+  const EFF: Record<string, any[]> = {
+    "action-move-to-corridor-a": [
+      { type: "move_to", node_id: "node-corridor-a" },
+    ],
+    "action-move-to-security": [{ type: "move_to", node_id: "node-security" }],
+    "action-move-to-storage": [{ type: "move_to", node_id: "node-storage" }],
+    "action-move-to-entrance": [{ type: "move_to", node_id: "node-entrance" }],
+    "action-move-to-corridor-b": [
+      { type: "move_to", node_id: "node-corridor-b" },
+    ],
+    "action-pick-up-keycard": [
+      { type: "add_item", item_id: "item-keycard" },
+      { type: "set_flag", key: "keycard_taken", value: true },
+    ],
+    "action-pick-up-medkit": [
+      { type: "add_item", item_id: "item-medkit" },
+      { type: "set_flag", key: "medkit_taken", value: true },
+    ],
+    "action-access-vault": [
+      { type: "unlock_node", node_id: "node-vault" },
+      { type: "set_flag", key: "vault_accessed", value: true },
+      { type: "move_to", node_id: "node-vault" },
+    ],
+    "action-retrieve-data-chip": [
+      { type: "add_item", item_id: "item-data-chip" },
+      { type: "set_flag", key: "data_retrieved", value: true },
+    ],
+  };
+
+  const NODES: Record<string, any> = {
+    "node-entrance": getDemoInitState("").currentNode,
+    "node-corridor-a": {
       node_id: "node-corridor-a",
       zone: "sector-7",
       name: "Corridor Alpha",
-      description: "A long hallway.",
+      description: "Sparking wires.",
       is_unlocked: true,
       is_corrupted: false,
       allowed_actions: [
@@ -29,332 +289,111 @@ const MOCK_INIT: any = {
         "action-move-to-storage",
       ],
     },
-  ],
-  inventory: [],
-  flags: {},
-  allowedActions: [],
-  narrativeText: "",
-  systemLogMessage: "",
-  characterMood: "neutral",
-  memoryChunks: [],
-  boundedCost: 1200,
-  linearCost: 4500,
-};
+    "node-security": {
+      node_id: "node-security",
+      zone: "sector-7",
+      name: "Security Checkpoint",
+      description: "Dead monitors.",
+      is_unlocked: true,
+      is_corrupted: false,
+      allowed_actions: [
+        "action-examine",
+        "action-pick-up-keycard",
+        "action-move-to-corridor-a",
+        "action-move-to-corridor-b",
+      ],
+    },
+    "node-storage": {
+      node_id: "node-storage",
+      zone: "sector-7",
+      name: "Storage Room",
+      description: "Dusty shelves.",
+      is_unlocked: true,
+      is_corrupted: false,
+      allowed_actions: [
+        "action-examine",
+        "action-pick-up-medkit",
+        "action-move-to-corridor-a",
+      ],
+    },
+    "node-corridor-b": {
+      node_id: "node-corridor-b",
+      zone: "sector-7",
+      name: "Corridor Beta",
+      description: "Narrow corridor.",
+      is_unlocked: true,
+      is_corrupted: false,
+      allowed_actions: [
+        "action-examine",
+        "action-move-to-security",
+        "action-access-vault",
+      ],
+    },
+    "node-vault": {
+      node_id: "node-vault",
+      zone: "sector-7",
+      name: "Vault Chamber",
+      description: "Server racks hum.",
+      is_unlocked: false,
+      is_corrupted: false,
+      allowed_actions: ["action-examine", "action-retrieve-data-chip"],
+    },
+  };
 
-const NODES: Record<string, any> = {
-  "node-entrance": {
-    node_id: "node-entrance",
-    zone: "sector-7",
-    name: "Entrance Hall",
-    description: "A dusty anteroom.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: ["action-examine", "action-move-to-corridor-a"],
-  },
-  "node-corridor-a": {
-    node_id: "node-corridor-a",
-    zone: "sector-7",
-    name: "Corridor Alpha",
-    description: "Sparking wires.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: [
-      "action-examine",
-      "action-move-to-entrance",
-      "action-move-to-security",
-      "action-move-to-storage",
-    ],
-  },
-  "node-security": {
-    node_id: "node-security",
-    zone: "sector-7",
-    name: "Security Checkpoint",
-    description: "Dead monitors. A keycard on the floor.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: [
-      "action-examine",
-      "action-pick-up-keycard",
-      "action-move-to-corridor-a",
-      "action-move-to-corridor-b",
-    ],
-  },
-  "node-storage": {
-    node_id: "node-storage",
-    zone: "sector-7",
-    name: "Storage Room",
-    description: "Dusty shelves. A medkit on the floor.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: [
-      "action-examine",
-      "action-pick-up-medkit",
-      "action-move-to-corridor-a",
-    ],
-  },
-  "node-corridor-b": {
-    node_id: "node-corridor-b",
-    zone: "sector-7",
-    name: "Corridor Beta",
-    description: "Narrow corridor. Vault door ahead.",
-    is_unlocked: true,
-    is_corrupted: false,
-    allowed_actions: [
-      "action-examine",
-      "action-move-to-security",
-      "action-access-vault",
-    ],
-  },
-  "node-vault": {
-    node_id: "node-vault",
-    zone: "sector-7",
-    name: "Vault Chamber",
-    description: "Server racks hum. The data chip is here.",
-    is_unlocked: false,
-    is_corrupted: false,
-    allowed_actions: ["action-examine", "action-retrieve-data-chip"],
-  },
-};
+  if (!mockState[sessionId]) {
+    mockState[sessionId] = {
+      sessionId,
+      currentNode: { ...NODES["node-entrance"] },
+      neighbors: [NODES["node-corridor-a"]],
+      inventory: [],
+      flags: {},
+      memoryChunks: [],
+      turnCount: 0,
+    };
+  }
 
-const ACTIONS: Record<string, any> = {
-  "action-examine": {
-    template_id: "action-examine",
-    label: "Examine Surroundings",
-    narrative_hint: "Survey for clues.",
-    requires: { items: [], flags: {} },
-    effects: [],
-  },
-  "action-move-to-entrance": {
-    template_id: "action-move-to-entrance",
-    label: "Go to Entrance Hall",
-    narrative_hint: "Head back.",
-    requires: { items: [], flags: {} },
-    effects: [{ type: "move_to", node_id: "node-entrance" }],
-  },
-  "action-move-to-corridor-a": {
-    template_id: "action-move-to-corridor-a",
-    label: "Go to Corridor Alpha",
-    narrative_hint: "Move forward.",
-    requires: { items: [], flags: {} },
-    effects: [{ type: "move_to", node_id: "node-corridor-a" }],
-  },
-  "action-move-to-security": {
-    template_id: "action-move-to-security",
-    label: "Go to Security Checkpoint",
-    narrative_hint: "Checkpoint ahead.",
-    requires: { items: [], flags: {} },
-    effects: [{ type: "move_to", node_id: "node-security" }],
-  },
-  "action-move-to-storage": {
-    template_id: "action-move-to-storage",
-    label: "Go to Storage Room",
-    narrative_hint: "Side room.",
-    requires: { items: [], flags: {} },
-    effects: [{ type: "move_to", node_id: "node-storage" }],
-  },
-  "action-move-to-corridor-b": {
-    template_id: "action-move-to-corridor-b",
-    label: "Go to Corridor Beta",
-    narrative_hint: "Toward vault.",
-    requires: { items: [], flags: {} },
-    effects: [{ type: "move_to", node_id: "node-corridor-b" }],
-  },
-  "action-pick-up-keycard": {
-    template_id: "action-pick-up-keycard",
-    label: "Pick Up Keycard",
-    narrative_hint: "Grab the badge.",
-    requires: { items: [], flags: { keycard_taken: false } },
-    effects: [
-      { type: "add_item", item_id: "item-keycard" },
-      { type: "set_flag", key: "keycard_taken", value: true },
-    ],
-  },
-  "action-pick-up-medkit": {
-    template_id: "action-pick-up-medkit",
-    label: "Retrieve Medkit",
-    narrative_hint: "Grab the kit.",
-    requires: { items: [], flags: { medkit_taken: false } },
-    effects: [
-      { type: "add_item", item_id: "item-medkit" },
-      { type: "set_flag", key: "medkit_taken", value: true },
-    ],
-  },
-  "action-access-vault": {
-    template_id: "action-access-vault",
-    label: "Access Vault",
-    narrative_hint: "Swipe keycard.",
-    requires: { items: ["item-keycard"], flags: {} },
-    effects: [
-      { type: "unlock_node", node_id: "node-vault" },
-      { type: "set_flag", key: "vault_accessed", value: true },
-      { type: "move_to", node_id: "node-vault" },
-    ],
-  },
-  "action-retrieve-data-chip": {
-    template_id: "action-retrieve-data-chip",
-    label: "Retrieve Data Chip",
-    narrative_hint: "Extract the chip.",
-    requires: { items: [], flags: { vault_accessed: true } },
-    effects: [
-      { type: "add_item", item_id: "item-data-chip" },
-      { type: "set_flag", key: "data_retrieved", value: true },
-    ],
-  },
-};
-
-const RESPONSES: Record<string, any> = {
-  "action-examine": {
-    nt: "You scan the area carefully. Faded warning signs line the walls. Nothing immediately useful, but you feel more oriented.",
+  const s = mockState[sessionId];
+  s.turnCount++;
+  const resp = RESP[actionId] || {
+    nt: "Nothing happens.",
     mood: "neutral",
-    log: "Turn T - Examine: no state changes.",
-  },
-  "action-move-to-entrance": {
-    nt: "You backtrack to the entrance hall. The same dusty anteroom as before.",
-    mood: "neutral",
-    log: "Turn T - Moved to Entrance Hall.",
-  },
-  "action-move-to-corridor-a": {
-    nt: "Corridor Alpha stretches ahead. Sparking wires hang from the ceiling. Two doors break the monotony: SECURITY on the left, STORAGE on the right.",
-    mood: "excited",
-    log: "Turn T - Moved to Corridor Alpha.",
-  },
-  "action-move-to-security": {
-    nt: "The Security Checkpoint. Banks of dead monitors line the walls. A magnetic keycard badge lies on the floor beside an overturned chair.",
-    mood: "excited",
-    log: "Turn T - Entered Security Checkpoint. Keycard detected.",
-  },
-  "action-move-to-storage": {
-    nt: "The Storage Room smells of rust and ozone. Metal shelves hold dusty equipment. A sealed medkit sits on the floor, somehow untouched.",
-    mood: "neutral",
-    log: "Turn T - Entered Storage Room. Medkit detected.",
-  },
-  "action-move-to-corridor-b": {
-    nt: "The corridor narrows. Ahead, a heavy biometric vault door looms. Its red indicator light blinks steadily.",
-    mood: "worried",
-    log: "Turn T - Moved to Corridor Beta.",
-  },
-  "action-pick-up-keycard": {
-    nt: "You pick up the magnetic security badge. The Hydrone Systems logo is barely legible, but the strip looks intact. This might grant deeper access.",
-    mood: "triumphant",
-    log: "Turn T - ITEM: Security Keycard acquired. Flag: keycard_taken=true.",
-  },
-  "action-pick-up-medkit": {
-    nt: "You retrieve the sealed medkit. Expired by two years, but the supplies inside look usable. Better than nothing.",
-    mood: "neutral",
-    log: "Turn T - ITEM: Medical Kit acquired. Flag: medkit_taken=true.",
-  },
-  "action-access-vault": {
-    nt: "You swipe the keycard. The red light blinks... then turns GREEN with a satisfying CLUNK. The vault door hisses open, revealing a climate-controlled chamber. Server racks hum with life.",
-    mood: "triumphant",
-    log: "Turn T - VAULT ACCESSED. Node unlocked. Flag: vault_accessed=true.",
-  },
-  "action-retrieve-data-chip": {
-    nt: "You extract the data chip from the server tray. CRITICAL RESEARCH DATA - the entire mission hinges on this.",
-    mood: "triumphant",
-    log: "Turn T - ITEM: Data Chip acquired. Flag: data_retrieved=true.",
-  },
-};
+    log: "Unknown action.",
+  };
+  const effects = EFF[actionId] || [];
 
-let state = JSON.parse(JSON.stringify(MOCK_INIT));
-let turns = 0;
-
-function applyEffects(
-  effects: any[],
-  inv: string[],
-  flags: Record<string, boolean>,
-  curNode: any,
-  nodes: Record<string, any>,
-) {
   for (const e of effects) {
-    if (e.type === "add_item" && !inv.includes(e.item_id))
-      inv = [...inv, e.item_id];
-    else if (e.type === "remove_item") inv = inv.filter((i) => i !== e.item_id);
-    else if (e.type === "set_flag") flags = { ...flags, [e.key]: e.value };
-    else if (e.type === "unlock_node" && nodes[e.node_id])
-      nodes[e.node_id] = { ...nodes[e.node_id], is_unlocked: true };
-    else if (e.type === "corrupt_node" && nodes[e.node_id])
-      nodes[e.node_id] = { ...nodes[e.node_id], is_corrupted: true };
-    else if (e.type === "move_to" && nodes[e.node_id])
-      curNode = { ...nodes[e.node_id] };
+    if (e.type === "add_item" && !s.inventory.includes(e.item_id))
+      s.inventory = [...s.inventory, e.item_id];
+    else if (e.type === "set_flag") s.flags = { ...s.flags, [e.key]: e.value };
+    else if (e.type === "unlock_node" && NODES[e.node_id])
+      NODES[e.node_id] = { ...NODES[e.node_id], is_unlocked: true };
+    else if (e.type === "move_to" && NODES[e.node_id])
+      s.currentNode = { ...NODES[e.node_id] };
   }
-  return { inv, flags, curNode, nodes };
-}
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const actionId: string = body.actionId;
+  s.memoryChunks = [
+    ...s.memoryChunks.slice(-9),
+    {
+      content: "Turn " + s.turnCount + ": " + actionId,
+      relevance_score: 0.5,
+    },
+  ];
 
-    if (actionId === "__reset__") {
-      state = JSON.parse(JSON.stringify(MOCK_INIT));
-      turns = 0;
-      return NextResponse.json(MOCK_INIT);
-    }
-
-    const resp = RESPONSES[actionId];
-    if (!resp)
-      return NextResponse.json(
-        { error: "Unknown action: " + actionId },
-        { status: 400 },
-      );
-
-    turns++;
-    const tmpl = ACTIONS[actionId];
-    let inv = [...state.inventory];
-    let flags = { ...state.flags };
-    let curNode = state.currentNode;
-    let nodes = { ...NODES };
-
-    if (tmpl) {
-      const r = applyEffects(tmpl.effects, inv, flags, curNode, nodes);
-      inv = r.inv;
-      flags = r.flags;
-      curNode = r.curNode;
-      nodes = r.nodes;
-    }
-
-    const nodeActions = (curNode.allowed_actions || [])
-      .map((id: string) => ACTIONS[id])
-      .filter(Boolean);
-    const neighborIds = new Set<string>();
-    for (const a of nodeActions)
-      for (const e of a.effects)
-        if (e.type === "move_to" && e.node_id !== curNode.node_id)
-          neighborIds.add(e.node_id);
-    const neighbors = Array.from(neighborIds)
-      .map((id) => nodes[id])
-      .filter(Boolean);
-
-    const logMsg = resp.log.replace("Turn T", "Turn " + turns);
-    const newMem = {
-      content:
-        "Turn " +
-        turns +
-        ": " +
-        (tmpl ? tmpl.label : actionId) +
-        " - " +
-        resp.nt.slice(0, 70) +
-        "...",
-      relevance_score: 0.5 + Math.random() * 0.4,
-    };
-
-    state = {
-      ...state,
-      currentNode: curNode,
-      neighbors,
-      inventory: inv,
-      flags,
-      allowedActions: nodeActions,
-      narrativeText: resp.nt,
-      systemLogMessage: logMsg,
-      characterMood: resp.mood,
-      memoryChunks: [...state.memoryChunks.slice(-9), newMem],
-      boundedCost: 1200,
-      linearCost: 4500 + turns * 800,
-    };
-
-    return NextResponse.json(state);
-  } catch (err) {
-    return NextResponse.json({ error: "Internal error" }, { status: 500 });
-  }
+  return {
+    ...s,
+    allowedActions: (s.currentNode?.allowed_actions || []).map(
+      (id: string) => ({
+        template_id: id,
+        label: id,
+        narrative_hint: "",
+        requires: { items: [], flags: {} },
+        effects: EFF[id] || [],
+      }),
+    ),
+    narrativeText: resp.nt,
+    systemLogMessage: resp.log.replace("Turn T", "Turn " + s.turnCount),
+    characterMood: resp.mood,
+    boundedCost: 1200,
+    linearCost: 4500 + s.turnCount * 800,
+  };
 }
