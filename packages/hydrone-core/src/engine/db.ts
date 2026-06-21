@@ -229,45 +229,51 @@ export async function loadSeed(): Promise<void> {
   const d = getDb();
 
   await d.transaction(async (tx) => {
-    // Insert nodes
-    for (const node of NODES) {
+    // Insert nodes — batch
+    if (NODES.length > 0) {
       await tx
         .insert(schema.worldNodes)
-        .values({
-          node_id: node.node_id,
-          zone: node.zone,
-          name: node.name,
-          description: node.description,
-          is_unlocked: node.is_unlocked,
-          is_corrupted: node.is_corrupted,
-          allowed_actions: node.allowed_actions,
-        })
+        .values(
+          NODES.map((node) => ({
+            node_id: node.node_id,
+            zone: node.zone,
+            name: node.name,
+            description: node.description,
+            is_unlocked: node.is_unlocked,
+            is_corrupted: node.is_corrupted,
+            allowed_actions: node.allowed_actions,
+          })),
+        )
         .onConflictDoNothing();
     }
 
-    // Insert items
-    for (const item of ITEM_CATALOG) {
+    // Insert items — batch
+    if (ITEM_CATALOG.length > 0) {
       await tx
         .insert(schema.itemCatalog)
-        .values({
-          item_id: item.item_id,
-          name: item.name,
-          description: item.description,
-        })
+        .values(
+          ITEM_CATALOG.map((item) => ({
+            item_id: item.item_id,
+            name: item.name,
+            description: item.description,
+          })),
+        )
         .onConflictDoNothing();
     }
 
-    // Insert action templates
-    for (const template of ACTION_TEMPLATES) {
+    // Insert action templates — batch
+    if (ACTION_TEMPLATES.length > 0) {
       await tx
         .insert(schema.actionTemplates)
-        .values({
-          template_id: template.template_id,
-          label: template.label,
-          narrative_hint: template.narrative_hint,
-          requires: template.requires,
-          effects: template.effects,
-        })
+        .values(
+          ACTION_TEMPLATES.map((template) => ({
+            template_id: template.template_id,
+            label: template.label,
+            narrative_hint: template.narrative_hint,
+            requires: template.requires,
+            effects: template.effects,
+          })),
+        )
         .onConflictDoNothing();
     }
   });
