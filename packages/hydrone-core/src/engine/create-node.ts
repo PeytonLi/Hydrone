@@ -13,9 +13,11 @@ export function registerNodeIds(ids: string[]): void {
   for (const id of ids) knownNodeIds.add(id);
 }
 
-/** Generate a unique node_id for a dynamically created node. */
+/** Generate a unique node_id, skipping IDs already registered (from prior sessions). */
 function generateNodeId(): string {
-  nodeCounter++;
+  do {
+    nodeCounter++;
+  } while (knownNodeIds.has(`node-dynamic-${nodeCounter}`));
   return `node-dynamic-${nodeCounter}`;
 }
 
