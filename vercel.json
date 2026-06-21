@@ -1,4 +1,5 @@
 {
+  "framework": "nextjs",
   "buildCommand": "pnpm turbo build --filter=@hydrone/game-client",
   "outputDirectory": "apps/game-client/.next",
   "installCommand": "pnpm install --frozen-lockfile"
