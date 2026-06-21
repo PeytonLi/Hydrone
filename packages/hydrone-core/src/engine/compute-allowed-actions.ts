@@ -1,5 +1,5 @@
 import type { SubGraph, ActionTemplate } from "../schema/zod";
-import { ACTION_TEMPLATES } from "../content/seed";
+import { templateRegistry } from "./template-registry";
 
 /**
  * Pure: compute which action templates are unlocked by the current state.
@@ -16,7 +16,7 @@ export function computeAllowedActions(state: SubGraph): ActionTemplate[] {
   const inventorySet = new Set(state.inventory);
   const nodeActionSet = new Set(state.current_node.allowed_actions);
 
-  return ACTION_TEMPLATES.filter((template) => {
+  return templateRegistry.getAll().filter((template) => {
     // Must be available on the current node
     if (!nodeActionSet.has(template.template_id)) {
       return false;

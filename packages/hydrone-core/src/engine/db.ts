@@ -3,10 +3,11 @@ import { Pool } from "pg";
 import { eq, and, inArray, sql } from "drizzle-orm";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type { SubGraph, WorldState, Mutation } from "../schema/zod";
+import type { SubGraph, WorldState, Mutation, ActionTemplate } from "../schema/zod";
 import { NODES, ITEM_CATALOG, ACTION_TEMPLATES } from "../content/seed";
 import * as schema from "../schema/postgres";
 import { resolveActionTemplates } from "./validate-action";
+import { templateRegistry } from "./template-registry";
 
 let db: NodePgDatabase<typeof schema> | null = null;
 
@@ -400,4 +401,16 @@ export async function loadSeed(): Promise<void> {
         .onConflictDoNothing();
     }
   });
+
+  // Reload ALL templates from Postgres into the in-memory registry.
+  // This picks up dynamic templates created in previous server instances.
+  const allTemplateRows = await d.select().from(schema.actionTemplates);
+  const hydratedTemplates: ActionTemplate[] = allTemplateRows.map((row) => ({
+    template_id: row.template_id,
+    label: row.label,
+    narrative_hint: row.narrative_hint,
+    requires: row.requires as ActionTemplate["requires"],
+    effects: row.effects as ActionTemplate["effects"],
+  }));
+  templateRegistry.registerMany(hydratedTemplates);
 }

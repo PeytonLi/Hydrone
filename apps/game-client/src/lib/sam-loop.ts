@@ -14,6 +14,7 @@ import {
   commitMutationBlock,
   createNode,
   getDb,
+  templateRegistry,
 } from "@hydrone/core";
 import { generateTurn, memory } from "@hydrone/llm-service";
 import { historicalLedger, worldNodes, actionTemplates } from "@hydrone/core";
@@ -162,16 +163,20 @@ export async function executeSamLoop(
           const moveActionId = `action-move-to-${newNode.node_id.replace("node-", "")}`;
 
           // Create move_to template from edge target → new node
+          const newTemplate = {
+            template_id: moveActionId,
+            label: `Go to ${newNode.name}`,
+            narrative_hint: `Travel to the newly discovered ${newNode.name}.`,
+            requires: { items: [] as string[], flags: {} as Record<string, boolean> },
+            effects: [{ type: "move_to" as const, node_id: newNode.node_id }],
+          };
           await db
             .insert(actionTemplates)
-            .values({
-              template_id: moveActionId,
-              label: `Go to ${newNode.name}`,
-              narrative_hint: `Travel to the newly discovered ${newNode.name}.`,
-              requires: { items: [], flags: {} },
-              effects: [{ type: "move_to", node_id: newNode.node_id }],
-            })
+            .values(newTemplate)
             .onConflictDoNothing();
+          // Register in-memory immediately so computeAllowedActions/fetchSubGraph
+          // can see it without a server restart.
+          templateRegistry.register(newTemplate);
 
           // Read current allowed_actions, append new one, write back as jsonb
           const [edgeNode] = await db

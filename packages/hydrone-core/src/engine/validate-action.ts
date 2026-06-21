@@ -1,6 +1,7 @@
 import type { SubGraph, NodeSpec, Mutation, ActionTemplate } from '../schema/zod';
-import { ACTION_TEMPLATES, ITEM_CATALOG } from '../content/seed';
+import { ITEM_CATALOG } from '../content/seed';
 import { computeAllowedActions } from './compute-allowed-actions';
+import { templateRegistry } from './template-registry';
 
 /**
  * Pure: assert that the chosen action is in the allowed set and validate any
@@ -13,7 +14,7 @@ export function validateAction(
   newNodeSpec?: NodeSpec
 ): { ok: true; effects: Mutation[] } | { ok: false; setback: Mutation[] } {
   // Find the action template
-  const template = ACTION_TEMPLATES.find((t) => t.template_id === actionId);
+  const template = templateRegistry.get(actionId);
   if (!template) {
     return { ok: false, setback: [] };
   }
@@ -40,7 +41,7 @@ export function validateAction(
 function validateNodeSpec(
   spec: NodeSpec
 ): { ok: true } | { ok: false; reason: string } {
-  const templateIds = new Set(ACTION_TEMPLATES.map((t) => t.template_id));
+  const templateIds = new Set(templateRegistry.getAll().map((t) => t.template_id));
   const itemIds = new Set(ITEM_CATALOG.map((i) => i.item_id));
 
   // Every action_template_id must reference a real template
@@ -67,6 +68,6 @@ function validateNodeSpec(
  */
 export function resolveActionTemplates(actionIds: string[]): ActionTemplate[] {
   return actionIds
-    .map((id) => ACTION_TEMPLATES.find((t) => t.template_id === id))
+    .map((id) => templateRegistry.get(id))
     .filter((t): t is ActionTemplate => t !== undefined);
 }
