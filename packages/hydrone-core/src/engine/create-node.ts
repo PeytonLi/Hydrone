@@ -1,5 +1,6 @@
 import type { WorldNode, NodeSpec } from "../schema/zod";
-import { ACTION_TEMPLATES, ITEM_CATALOG, NODES } from "../content/seed";
+import { ITEM_CATALOG, NODES } from "../content/seed";
+import { templateRegistry } from "./template-registry";
 
 let nodeCounter = NODES.length;
 
@@ -17,7 +18,9 @@ function generateNodeId(): string {
  * dynamically generated node can smuggle in unknown items or actions.
  */
 export function createNode(spec: NodeSpec): WorldNode {
-  const templateIds = new Set(ACTION_TEMPLATES.map((t) => t.template_id));
+  const templateIds = new Set(
+    templateRegistry.getAll().map((t) => t.template_id),
+  );
   const itemIds = new Set(ITEM_CATALOG.map((i) => i.item_id));
   const nodeIds = new Set(NODES.map((n) => n.node_id));
 
